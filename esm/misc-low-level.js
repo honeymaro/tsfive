@@ -48,6 +48,56 @@ export class Heap {
   HDF5 local heap.
   """
   */
+
+  /**
+   * Get heap data location without reading the data
+   * @param {ArrayBuffer} fh - Buffer
+   * @param {number} offset - Heap header offset
+   * @returns {{dataOffset: number, dataSize: number}}
+   */
+  static getDataLocation(fh, offset) {
+    let local_heap = _unpack_struct_from(LOCAL_HEAP, fh, offset);
+    return {
+      dataOffset: local_heap.get('address_of_data_segment'),
+      dataSize: local_heap.get('data_segment_size')
+    };
+  }
+
+  /**
+   * Create a Heap with async data loading
+   * @param {ArrayBuffer} fh - Buffer containing heap header
+   * @param {number} offset - Heap header offset
+   * @param {FileSource} source - File source for async reads
+   * @returns {Promise<Heap>}
+   */
+  static async createAsync(fh, offset, source) {
+    let local_heap = _unpack_struct_from(LOCAL_HEAP, fh, offset);
+    assert(local_heap.get('signature') == 'HEAP');
+    assert(local_heap.get('version') == 0);
+
+    const data_offset = local_heap.get('address_of_data_segment');
+    const data_size = local_heap.get('data_segment_size');
+
+    let heap_data;
+    if (data_offset + data_size <= fh.byteLength) {
+      // Data is in buffer
+      heap_data = fh.slice(data_offset, data_offset + data_size);
+    } else if (source) {
+      // Load data from source
+      console.log(`jsfive: Loading heap data ${data_offset}-${data_offset + data_size} (${data_size} bytes)`);
+      heap_data = await source.read(data_offset, data_offset + data_size);
+    } else {
+      throw new Error('Heap data is outside buffer and no source provided');
+    }
+
+    local_heap.set('heap_data', heap_data);
+
+    const heap = Object.create(Heap.prototype);
+    heap._contents = local_heap;
+    heap.data = heap_data;
+    return heap;
+  }
+
   constructor(fh, offset) {
     //""" initalize. """
 
@@ -56,7 +106,12 @@ export class Heap {
     assert(local_heap.get('signature') == 'HEAP');
     assert(local_heap.get('version') == 0);
     let data_offset = local_heap.get('address_of_data_segment');
-    let heap_data = fh.slice(data_offset, data_offset + local_heap.get('data_segment_size'));
+    let data_size = local_heap.get('data_segment_size');
+    console.log(`jsfive DEBUG Heap: offset=${offset}, data_offset=${data_offset}, data_size=${data_size}, buffer_size=${fh.byteLength}`);
+    if (data_offset + data_size > fh.byteLength) {
+      console.warn(`jsfive WARNING: Heap data segment (${data_offset}-${data_offset + data_size}) is outside buffer (${fh.byteLength})`);
+    }
+    let heap_data = fh.slice(data_offset, data_offset + data_size);
     local_heap.set('heap_data', heap_data);
     this._contents = local_heap;
     this.data = heap_data;

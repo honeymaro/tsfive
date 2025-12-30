@@ -1,4 +1,4 @@
-import * as pako from '../node_modules/pako/dist/pako.esm.mjs';
+import * as pako from 'pako';
 import { struct } from './core.js';
 
 const zlib_decompress = function (buf, itemsize) {
