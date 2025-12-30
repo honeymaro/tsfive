@@ -4,6 +4,7 @@
  */
 
 import { open, stat } from 'fs/promises';
+import type { FileHandle } from 'fs/promises';
 import { FileSource } from './file-source.js';
 
 /**
@@ -11,10 +12,14 @@ import { FileSource } from './file-source.js';
  * Uses fs.promises for efficient partial file reads
  */
 export class NodeFileSource extends FileSource {
+  private _path: string;
+  private _fileHandle: FileHandle | null;
+  private _size: number | null;
+
   /**
-   * @param {string} filePath - Path to the file
+   * @param filePath - Path to the file
    */
-  constructor(filePath) {
+  constructor(filePath: string) {
     super();
     this._path = filePath;
     this._fileHandle = null;
@@ -23,9 +28,9 @@ export class NodeFileSource extends FileSource {
 
   /**
    * Initialize the source (open file and get size)
-   * @returns {Promise<NodeFileSource>} This instance for chaining
+   * @returns This instance for chaining
    */
-  async init() {
+  async init(): Promise<NodeFileSource> {
     this._fileHandle = await open(this._path, 'r');
     const stats = await stat(this._path);
     this._size = stats.size;
@@ -34,11 +39,11 @@ export class NodeFileSource extends FileSource {
 
   /**
    * Read a range of bytes from the file
-   * @param {number} start - Start offset (inclusive)
-   * @param {number} end - End offset (exclusive)
-   * @returns {Promise<ArrayBuffer>} The requested data
+   * @param start - Start offset (inclusive)
+   * @param end - End offset (exclusive)
+   * @returns The requested data
    */
-  async read(start, end) {
+  async read(start: number, end: number): Promise<ArrayBuffer> {
     if (!this._fileHandle) {
       throw new Error('NodeFileSource not initialized. Call init() first.');
     }
@@ -57,9 +62,8 @@ export class NodeFileSource extends FileSource {
 
   /**
    * Close the file handle
-   * @returns {Promise<void>}
    */
-  async close() {
+  async close(): Promise<void> {
     if (this._fileHandle) {
       await this._fileHandle.close();
       this._fileHandle = null;
@@ -68,9 +72,8 @@ export class NodeFileSource extends FileSource {
 
   /**
    * Get the total file size
-   * @returns {number} File size in bytes
    */
-  get size() {
+  get size(): number {
     if (this._size === null) {
       throw new Error('NodeFileSource not initialized. Call init() first.');
     }
@@ -79,9 +82,8 @@ export class NodeFileSource extends FileSource {
 
   /**
    * The file path
-   * @returns {string}
    */
-  get path() {
+  get path(): string {
     return this._path;
   }
 }

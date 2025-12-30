@@ -1,6 +1,8 @@
-jsfive is in the public domain.
+tsfive is in the public domain.
 
-It is based in large part on the pyfive library
+Based on jsfive by Brian B. Maranville
+https://github.com/usnistgov/jsfive
+
+Which is based on pyfive library
 https://github.com/jjhelmus/pyfive
 Copyright (c) 2016 Jonathan J. Helmus
-All rights reserved.

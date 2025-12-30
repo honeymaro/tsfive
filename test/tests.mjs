@@ -1,12 +1,17 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { read, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
-import * as hdf5 from "jsfive";
+import * as hdf5 from "../dist/esm/index.mjs";
 
 function loadFile(filename) {
     const ab = readFileSync(filename);
     return new hdf5.File(ab.buffer, filename);
+}
+
+function loadFileAsArrayBuffer(filename) {
+    const ab = readFileSync(filename);
+    return ab.buffer;
 }
 
 test('check dtypes', () => {
@@ -31,4 +36,90 @@ test('strings', () => {
   const vlen_dset = f.get('vlen_string');
   assert.deepEqual(vlen_dset.dtype, ['VLEN_STRING', 0, 1]);
   assert.deepEqual(vlen_dset.value, ['hello']);
+});
+
+// ============================================================================
+// Async API Tests
+// ============================================================================
+
+test('openFile with ArrayBuffer', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+  const file = await hdf5.openFile(buffer, { filename: 'test.h5' });
+
+  assert.ok(file);
+  assert.ok(file.keys.length > 0);
+
+  await file.close();
+});
+
+test('AsyncFile getAsync', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+  const file = await hdf5.openFile(buffer);
+
+  const dataset = await file.getAsync('f4');
+  assert.ok(dataset);
+  assert.strictEqual(dataset.dtype, '<f4');
+  assert.deepEqual(dataset.shape, [3]);
+
+  await file.close();
+});
+
+test('AsyncDataset sliceAsync', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+  const file = await hdf5.openFile(buffer);
+
+  const dataset = await file.getAsync('f4');
+  const slice = await dataset.sliceAsync(0, 2);
+
+  assert.strictEqual(slice.length, 2);
+  assert.deepEqual(slice, [3.0, 4.0]);
+
+  await file.close();
+});
+
+test('AsyncDataset valueAsync', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+  const file = await hdf5.openFile(buffer);
+
+  const dataset = await file.getAsync('f4');
+  const value = await dataset.valueAsync();
+
+  assert.deepEqual(value, [3.0, 4.0, 5.0]);
+
+  await file.close();
+});
+
+test('AsyncDataset iterChunks', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+  const file = await hdf5.openFile(buffer);
+
+  const dataset = await file.getAsync('f4');
+  const chunks = [];
+
+  for await (const chunk of dataset.iterChunks({ chunkSize: 2 })) {
+    chunks.push(chunk);
+  }
+
+  assert.ok(chunks.length >= 1);
+  assert.ok(chunks[0].data);
+  assert.strictEqual(typeof chunks[0].offset, 'number');
+  assert.strictEqual(typeof chunks[0].size, 'number');
+  assert.strictEqual(typeof chunks[0].isLast, 'boolean');
+
+  await file.close();
+});
+
+test('AsyncGroup navigation', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+  const file = await hdf5.openFile(buffer);
+
+  // Test keys
+  assert.ok(Array.isArray(file.keys));
+  assert.ok(file.keys.includes('f4'));
+
+  // Test attrs
+  const attrs = file.attrs;
+  assert.ok(typeof attrs === 'object');
+
+  await file.close();
 });

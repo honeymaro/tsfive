@@ -3,137 +3,157 @@
  * Supports various data sources: ArrayBuffer, Blob/File, HTTP Range Requests
  */
 
+import type { IFileSource, HTTPSourceOptions } from './types/file-source.js';
+
+// ============================================================================
+// Abstract Base Class
+// ============================================================================
+
 /**
  * Abstract base class for file sources
  * All file sources must implement this interface
  */
-export class FileSource {
+export abstract class FileSource implements IFileSource {
   /**
    * Read a range of bytes from the file
-   * @param {number} start - Start offset (inclusive)
-   * @param {number} end - End offset (exclusive)
-   * @returns {Promise<ArrayBuffer>} The requested data
+   * @param start - Start offset (inclusive)
+   * @param end - End offset (exclusive)
+   * @returns Promise resolving to the requested data
    */
-  async read(start, end) {
+  async read(_start: number, _end: number): Promise<ArrayBuffer> {
     throw new Error('Not implemented');
   }
 
   /**
    * Synchronous read (for legacy compatibility)
-   * @param {number} start - Start offset (inclusive)
-   * @param {number} end - End offset (exclusive)
-   * @returns {ArrayBuffer} The requested data
+   * @param start - Start offset (inclusive)
+   * @param end - End offset (exclusive)
+   * @returns The requested data
    */
-  readSync(start, end) {
+  readSync(_start: number, _end: number): ArrayBuffer {
     throw new Error('Synchronous read not supported for this source');
   }
 
   /**
    * Get the total file size
-   * @returns {number} File size in bytes
    */
-  get size() {
-    throw new Error('Not implemented');
-  }
+  abstract get size(): number;
 
   /**
    * Whether this source supports synchronous reads
-   * @returns {boolean}
    */
-  get supportsSync() {
+  get supportsSync(): boolean {
     return false;
   }
 
   /**
    * Close the file source and release resources
-   * @returns {Promise<void>}
    */
-  async close() {
+  async close(): Promise<void> {
     // Default: no-op
   }
 }
+
+// ============================================================================
+// ArrayBuffer Source
+// ============================================================================
 
 /**
  * ArrayBuffer-based file source (for legacy compatibility)
  * Supports both sync and async reads from an in-memory buffer
  */
 export class ArrayBufferSource extends FileSource {
+  private _buffer: ArrayBuffer;
+
   /**
-   * @param {ArrayBuffer} buffer - The complete file data
+   * @param buffer - The complete file data
    */
-  constructor(buffer) {
+  constructor(buffer: ArrayBuffer) {
     super();
     this._buffer = buffer;
   }
 
-  async read(start, end) {
+  async read(start: number, end: number): Promise<ArrayBuffer> {
     return this._buffer.slice(start, end);
   }
 
-  readSync(start, end) {
+  readSync(start: number, end: number): ArrayBuffer {
     return this._buffer.slice(start, end);
   }
 
-  get size() {
+  get size(): number {
     return this._buffer.byteLength;
   }
 
-  get supportsSync() {
+  get supportsSync(): boolean {
     return true;
   }
 }
+
+// ============================================================================
+// Blob Source
+// ============================================================================
 
 /**
  * Blob/File-based file source (for browser File API)
  * Uses File.slice() for efficient partial reads
  */
 export class BlobSource extends FileSource {
+  private _blob: Blob;
+
   /**
-   * @param {Blob|File} blob - Browser Blob or File object
+   * @param blob - Browser Blob or File object
    */
-  constructor(blob) {
+  constructor(blob: Blob) {
     super();
     this._blob = blob;
   }
 
-  async read(start, end) {
+  async read(start: number, end: number): Promise<ArrayBuffer> {
     const slice = this._blob.slice(start, end);
     return await slice.arrayBuffer();
   }
 
-  get size() {
+  get size(): number {
     return this._blob.size;
   }
 }
+
+// ============================================================================
+// HTTP Source
+// ============================================================================
 
 /**
  * HTTP Range Request-based file source
  * Fetches only the requested byte ranges from a remote URL
  */
 export class HTTPSource extends FileSource {
+  private _url: string;
+  private _size: number | null;
+  private _fetchOptions: RequestInit;
+  private _supportsRangeRequests: boolean | null;
+
   /**
-   * @param {string} url - The URL to fetch from
-   * @param {Object} options - Options
-   * @param {number} [options.size] - Known file size (skip HEAD request if provided)
-   * @param {Object} [options.fetchOptions] - Additional options to pass to fetch()
+   * @param url - The URL to fetch from
+   * @param options - Options
    */
-  constructor(url, options = {}) {
+  constructor(url: string, options: HTTPSourceOptions = {}) {
     super();
     this._url = url;
-    this._size = options.size || null;
-    this._fetchOptions = options.fetchOptions || {};
+    this._size = options.size ?? null;
+    this._fetchOptions = options.fetchOptions ?? {};
     this._supportsRangeRequests = null;
   }
 
   /**
    * Initialize the source (fetch file size if not provided)
-   * @returns {Promise<HTTPSource>} This instance for chaining
+   * @returns This instance for chaining
    */
-  async init() {
+  async init(): Promise<HTTPSource> {
     if (this._size === null) {
       const response = await fetch(this._url, {
         method: 'HEAD',
-        ...this._fetchOptions
+        ...this._fetchOptions,
       });
 
       if (!response.ok) {
@@ -154,12 +174,12 @@ export class HTTPSource extends FileSource {
     return this;
   }
 
-  async read(start, end) {
+  async read(start: number, end: number): Promise<ArrayBuffer> {
     const response = await fetch(this._url, {
       headers: {
-        'Range': `bytes=${start}-${end - 1}`
+        Range: `bytes=${start}-${end - 1}`,
       },
-      ...this._fetchOptions
+      ...this._fetchOptions,
     });
 
     if (!response.ok && response.status !== 206) {
@@ -169,7 +189,7 @@ export class HTTPSource extends FileSource {
     return await response.arrayBuffer();
   }
 
-  get size() {
+  get size(): number {
     if (this._size === null) {
       throw new Error('HTTPSource not initialized. Call init() first.');
     }
@@ -178,9 +198,9 @@ export class HTTPSource extends FileSource {
 
   /**
    * Whether the server supports HTTP Range requests
-   * @returns {boolean|null} null if not yet determined
+   * @returns null if not yet determined
    */
-  get supportsRangeRequests() {
+  get supportsRangeRequests(): boolean | null {
     return this._supportsRangeRequests;
   }
 }

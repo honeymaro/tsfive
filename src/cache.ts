@@ -1,18 +1,26 @@
 /**
- * LRU Cache and caching file source wrapper for jsfive
+ * LRU Cache and Caching FileSource Wrapper
  */
 
-import { FileSource } from './file-source.js';
+import type { IFileSource, CacheOptions, CacheStats, CacheEntry } from './types/file-source.js';
+
+// ============================================================================
+// LRU Cache
+// ============================================================================
 
 /**
  * LRU (Least Recently Used) Cache implementation
  * Evicts least recently used items when cache size exceeds limit
  */
-export class LRUCache {
+export class LRUCache<T = ArrayBuffer> {
+  private _maxSize: number;
+  private _currentSize: number;
+  private _cache: Map<string, CacheEntry<T>>;
+
   /**
-   * @param {number} maxSize - Maximum cache size in bytes
+   * @param maxSize - Maximum cache size in bytes
    */
-  constructor(maxSize) {
+  constructor(maxSize: number) {
     this._maxSize = maxSize;
     this._currentSize = 0;
     this._cache = new Map(); // Map maintains insertion order
@@ -20,16 +28,16 @@ export class LRUCache {
 
   /**
    * Get an item from the cache
-   * @param {string} key - Cache key
-   * @returns {*} Cached value or null if not found
+   * @param key - Cache key
+   * @returns Cached value or null if not found
    */
-  get(key) {
+  get(key: string): T | null {
     if (!this._cache.has(key)) {
       return null;
     }
 
     // Move to end (most recently used)
-    const entry = this._cache.get(key);
+    const entry = this._cache.get(key)!;
     this._cache.delete(key);
     this._cache.set(key, entry);
 
@@ -38,11 +46,11 @@ export class LRUCache {
 
   /**
    * Set an item in the cache
-   * @param {string} key - Cache key
-   * @param {ArrayBuffer|Array} data - Data to cache
-   * @param {number} [size] - Size in bytes (auto-calculated if not provided)
+   * @param key - Cache key
+   * @param data - Data to cache
+   * @param size - Size in bytes (auto-calculated if not provided)
    */
-  set(key, data, size) {
+  set(key: string, data: T, size?: number): void {
     // Calculate size if not provided
     if (size === undefined) {
       if (data instanceof ArrayBuffer) {
@@ -57,7 +65,7 @@ export class LRUCache {
 
     // Remove existing entry if present
     if (this._cache.has(key)) {
-      const existing = this._cache.get(key);
+      const existing = this._cache.get(key)!;
       this._currentSize -= existing.size;
       this._cache.delete(key);
     }
@@ -65,7 +73,7 @@ export class LRUCache {
     // Evict items until we have enough space
     while (this._currentSize + size > this._maxSize && this._cache.size > 0) {
       const [oldestKey] = this._cache.keys();
-      const oldest = this._cache.get(oldestKey);
+      const oldest = this._cache.get(oldestKey)!;
       this._cache.delete(oldestKey);
       this._currentSize -= oldest.size;
     }
@@ -77,24 +85,21 @@ export class LRUCache {
 
   /**
    * Check if key exists in cache
-   * @param {string} key
-   * @returns {boolean}
    */
-  has(key) {
+  has(key: string): boolean {
     return this._cache.has(key);
   }
 
   /**
    * Remove an item from the cache
-   * @param {string} key
-   * @returns {boolean} True if item was removed
+   * @returns True if item was removed
    */
-  delete(key) {
+  delete(key: string): boolean {
     if (!this._cache.has(key)) {
       return false;
     }
 
-    const entry = this._cache.get(key);
+    const entry = this._cache.get(key)!;
     this._currentSize -= entry.size;
     this._cache.delete(key);
     return true;
@@ -103,50 +108,51 @@ export class LRUCache {
   /**
    * Clear all items from the cache
    */
-  clear() {
+  clear(): void {
     this._cache.clear();
     this._currentSize = 0;
   }
 
   /**
-   * Get the current cache size in bytes
-   * @returns {number}
+   * Current cache size in bytes
    */
-  get size() {
+  get size(): number {
     return this._currentSize;
   }
 
   /**
-   * Get the maximum cache size in bytes
-   * @returns {number}
+   * Maximum cache size in bytes
    */
-  get maxSize() {
+  get maxSize(): number {
     return this._maxSize;
   }
 
   /**
-   * Get the number of items in the cache
-   * @returns {number}
+   * Number of items in the cache
    */
-  get count() {
+  get count(): number {
     return this._cache.size;
   }
 }
 
+// ============================================================================
+// Cached File Source
+// ============================================================================
 
 /**
  * File source wrapper with block-level caching
  * Caches file reads in fixed-size blocks for efficient repeated access
  */
-export class CachedFileSource extends FileSource {
+export class CachedFileSource implements IFileSource {
+  private _source: IFileSource;
+  private _cache: LRUCache<ArrayBuffer>;
+  private _blockSize: number;
+
   /**
-   * @param {FileSource} source - Underlying file source
-   * @param {Object} options - Options
-   * @param {number} [options.cacheSize=67108864] - Cache size in bytes (default 64MB)
-   * @param {number} [options.blockSize=65536] - Block size in bytes (default 64KB)
+   * @param source - Underlying file source
+   * @param options - Cache options
    */
-  constructor(source, options = {}) {
-    super();
+  constructor(source: IFileSource, options: CacheOptions = {}) {
     this._source = source;
     this._cache = new LRUCache(options.cacheSize || 64 * 1024 * 1024);
     this._blockSize = options.blockSize || 64 * 1024;
@@ -154,15 +160,12 @@ export class CachedFileSource extends FileSource {
 
   /**
    * Read a range of bytes with caching
-   * @param {number} start - Start offset
-   * @param {number} end - End offset
-   * @returns {Promise<ArrayBuffer>}
    */
-  async read(start, end) {
+  async read(start: number, end: number): Promise<ArrayBuffer> {
     const startBlock = Math.floor(start / this._blockSize);
     const endBlock = Math.ceil(end / this._blockSize);
 
-    const blocks = [];
+    const blocks: ArrayBuffer[] = [];
 
     for (let b = startBlock; b < endBlock; b++) {
       const blockKey = `block_${b}`;
@@ -185,19 +188,16 @@ export class CachedFileSource extends FileSource {
 
   /**
    * Synchronous read with caching (if supported by underlying source)
-   * @param {number} start
-   * @param {number} end
-   * @returns {ArrayBuffer}
    */
-  readSync(start, end) {
-    if (!this._source.supportsSync) {
+  readSync(start: number, end: number): ArrayBuffer {
+    if (!this._source.readSync) {
       throw new Error('Underlying source does not support synchronous reads');
     }
 
     const startBlock = Math.floor(start / this._blockSize);
     const endBlock = Math.ceil(end / this._blockSize);
 
-    const blocks = [];
+    const blocks: ArrayBuffer[] = [];
 
     for (let b = startBlock; b < endBlock; b++) {
       const blockKey = `block_${b}`;
@@ -218,9 +218,13 @@ export class CachedFileSource extends FileSource {
 
   /**
    * Extract the requested range from cached blocks
-   * @private
    */
-  _extractRange(blocks, startBlock, start, end) {
+  private _extractRange(
+    blocks: ArrayBuffer[],
+    startBlock: number,
+    start: number,
+    end: number
+  ): ArrayBuffer {
     // Single block case - optimize
     if (blocks.length === 1) {
       const localStart = start - startBlock * this._blockSize;
@@ -245,45 +249,43 @@ export class CachedFileSource extends FileSource {
   }
 
   /**
-   * Get the file size
-   * @returns {number}
+   * File size
    */
-  get size() {
+  get size(): number {
     return this._source.size;
   }
 
   /**
    * Whether synchronous reads are supported
-   * @returns {boolean}
    */
-  get supportsSync() {
-    return this._source.supportsSync;
+  get supportsSync(): boolean {
+    return this._source.supportsSync ?? false;
   }
 
   /**
    * Close the underlying source
-   * @returns {Promise<void>}
    */
-  async close() {
-    await this._source.close();
+  async close(): Promise<void> {
+    if (this._source.close) {
+      await this._source.close();
+    }
   }
 
   /**
    * Clear the cache
    */
-  clearCache() {
+  clearCache(): void {
     this._cache.clear();
   }
 
   /**
    * Get cache statistics
-   * @returns {{size: number, maxSize: number, count: number, hitRate: number}}
    */
-  get cacheStats() {
+  get cacheStats(): CacheStats {
     return {
       size: this._cache.size,
       maxSize: this._cache.maxSize,
-      count: this._cache.count
+      count: this._cache.count,
     };
   }
 }
