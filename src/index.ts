@@ -22,6 +22,9 @@ export {
   CachedFileSource,
 } from './high-level.js';
 
+// Debug utilities
+export { debugLog, debugWarn } from './debug.js';
+
 // Types
 export type { OpenFileOptions, ChunkResult } from './high-level.js';
 export type { Dtype, DataValue } from './types/dtype.js';

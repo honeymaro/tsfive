@@ -4,6 +4,7 @@
  */
 
 import { _structure_size, _unpack_struct_from, struct, dtype_getter, DataView64 } from './core.js';
+import { debugLog, debugWarn } from './debug.js';
 import { BTreeV1Groups } from './btree.js';
 import { Heap, SymbolTable } from './misc-low-level.js';
 import { Filters } from './filters.js';
@@ -89,10 +90,12 @@ type Slice = [number, number];
  */
 export class AsyncDataObjects extends DataObjects {
   protected _source: IFileSource;
+  protected _debug: boolean;
 
-  constructor(fh: ArrayBuffer, offset: number, source: IFileSource) {
+  constructor(fh: ArrayBuffer, offset: number, source: IFileSource, debug: boolean = false) {
     super(fh, offset);
     this._source = source;
+    this._debug = debug;
   }
 
   /**
@@ -101,9 +104,10 @@ export class AsyncDataObjects extends DataObjects {
   static async createAsync(
     fh: ArrayBuffer,
     offset: number,
-    source: IFileSource
+    source: IFileSource,
+    debug: boolean = false
   ): Promise<AsyncDataObjects> {
-    console.log(`tsfive async: createAsync offset=${offset}, buffer=${fh.byteLength}`);
+    debugLog(debug, `tsfive async: createAsync offset=${offset}, buffer=${fh.byteLength}`);
 
     let workingBuffer = fh;
     let workingOffset = offset;
@@ -112,7 +116,7 @@ export class AsyncDataObjects extends DataObjects {
     if (offset >= fh.byteLength) {
       const loadSize = 64 * 1024;
       const loadEnd = Math.min(offset + loadSize, source.size);
-      console.log(`tsfive async: Loading DataObjects at ${offset}`);
+      debugLog(debug, `tsfive async: Loading DataObjects at ${offset}`);
       workingBuffer = await source.read(offset, loadEnd);
       workingOffset = 0;
     }
@@ -123,24 +127,27 @@ export class AsyncDataObjects extends DataObjects {
       workingBuffer = await AsyncDataObjects._loadV1WithContinuations(
         workingBuffer,
         workingOffset,
-        source
+        source,
+        debug
       );
     } else if (versionHint === 79) {
       // 'O' = v2
       workingBuffer = await AsyncDataObjects._loadV2WithContinuations(
         workingBuffer,
         workingOffset,
-        source
+        source,
+        debug
       );
     }
 
-    return new AsyncDataObjects(workingBuffer, workingOffset, source);
+    return new AsyncDataObjects(workingBuffer, workingOffset, source, debug);
   }
 
   private static async _loadV1WithContinuations(
     buffer: ArrayBuffer,
     offset: number,
-    source: IFileSource
+    source: IFileSource,
+    debug: boolean = false
   ): Promise<ArrayBuffer> {
     const header = _unpack_struct_from(OBJECT_HEADER_V1, buffer, offset);
     const blockSize = header.get('object_header_size') as number;
@@ -154,7 +161,7 @@ export class AsyncDataObjects extends DataObjects {
       const [blkOffset, blkSize] = blocksToProcess.shift()!;
 
       if (blkOffset + blkSize > expandedBuffer.byteLength) {
-        console.log(`tsfive async: Loading V1 block ${blkOffset}-${blkOffset + blkSize}`);
+        debugLog(debug, `tsfive async: Loading V1 block ${blkOffset}-${blkOffset + blkSize}`);
         const blockData = await source.read(blkOffset, blkOffset + blkSize);
 
         const newSize = Math.max(expandedBuffer.byteLength, blkOffset + blkSize);
@@ -198,7 +205,8 @@ export class AsyncDataObjects extends DataObjects {
   private static async _loadV2WithContinuations(
     buffer: ArrayBuffer,
     offset: number,
-    source: IFileSource
+    source: IFileSource,
+    debug: boolean = false
   ): Promise<ArrayBuffer> {
     const header = _unpack_struct_from(OBJECT_HEADER_V2, buffer, offset);
     const flags = header.get('flags') as number;
@@ -226,7 +234,7 @@ export class AsyncDataObjects extends DataObjects {
       const [blkOffset, blkSize] = blocksToProcess.shift()!;
 
       if (blkOffset + blkSize > expandedBuffer.byteLength) {
-        console.log(`tsfive async: Loading V2 block ${blkOffset}-${blkOffset + blkSize}`);
+        debugLog(debug, `tsfive async: Loading V2 block ${blkOffset}-${blkOffset + blkSize}`);
         const blockData = await source.read(blkOffset, blkOffset + blkSize);
 
         const newSize = Math.max(expandedBuffer.byteLength, blkOffset + blkSize);
@@ -280,7 +288,7 @@ export class AsyncDataObjects extends DataObjects {
         const heapAddress = data.get('heap_address') as number;
 
         const btree = new BTreeV1Groups(this.fh, btreeAddress);
-        const heap = await Heap.createAsync(this.fh, heapAddress, this._source);
+        const heap = await Heap.createAsync(this.fh, heapAddress, this._source, this._debug);
 
         for (const symbolTableAddress of btree.symbol_table_addresses()) {
           let tableBuffer: ArrayBuffer = this.fh;
@@ -303,7 +311,12 @@ export class AsyncDataObjects extends DataObjects {
               links[name] = addr;
             }
           } catch (e) {
-            console.error(`tsfive async: Error parsing symbol_table: ${(e as Error).message}`);
+            // Always warn about corrupted tables, show details in debug mode
+            console.warn('tsfive: Skipped corrupted symbol table');
+            debugLog(
+              this._debug,
+              `tsfive async: symbol_table error details: ${(e as Error).message}`
+            );
           }
         }
       } else if (msg.get('type') === LINK_MSG_TYPE) {
@@ -430,7 +443,7 @@ export class AsyncDataObjects extends DataObjects {
     // Safety check: limit number of chunks to process at once
     const MAX_CHUNKS = 1000;
     if (requiredChunks.length > MAX_CHUNKS) {
-      console.warn(`tsfive: Processing ${requiredChunks.length} chunks in batches`);
+      debugWarn(this._debug, `tsfive: Processing ${requiredChunks.length} chunks in batches`);
     }
 
     const output: DataValue[] = new Array(outputSize);
@@ -500,7 +513,8 @@ export class AsyncDataObjects extends DataObjects {
     // Log large slice requests for debugging
     const sliceSize = slices.reduce((acc, [s, e]) => acc * (e - s), 1);
     if (sliceSize > 1000000) {
-      console.log(
+      debugLog(
+        this._debug,
         `tsfive lazy: Large slice - size=${sliceSize}, slices=${JSON.stringify(slices)}, shape=${JSON.stringify(dataShape)}`
       );
     }
@@ -579,7 +593,10 @@ export class AsyncDataObjects extends DataObjects {
       }
     }
 
-    console.log(`tsfive lazy: Found ${requiredChunks.length} chunks, loaded ${nodesLoaded} nodes`);
+    debugLog(
+      this._debug,
+      `tsfive lazy: Found ${requiredChunks.length} chunks, loaded ${nodesLoaded} nodes`
+    );
     return requiredChunks;
   }
 
@@ -596,7 +613,10 @@ export class AsyncDataObjects extends DataObjects {
     try {
       return await this._source.read(nodeAddr, loadEnd);
     } catch (e) {
-      console.log(`tsfive lazy: Error loading node at ${nodeAddr}: ${(e as Error).message}`);
+      debugLog(
+        this._debug,
+        `tsfive lazy: Error loading node at ${nodeAddr}: ${(e as Error).message}`
+      );
       return null;
     }
   }

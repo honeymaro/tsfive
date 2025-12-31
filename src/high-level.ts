@@ -8,6 +8,7 @@ import { AsyncDataObjects } from './async-dataobjects.js';
 import { SuperBlock } from './misc-low-level.js';
 import { ArrayBufferSource, BlobSource, HTTPSource } from './file-source.js';
 import { CachedFileSource } from './cache.js';
+import { debugLog } from './debug.js';
 import type { IFileSource } from './types/file-source.js';
 import type { Dtype, DataValue } from './types/dtype.js';
 import type { Links } from './types/hdf5.js';
@@ -328,6 +329,8 @@ export interface OpenFileOptions {
   filename?: string;
   initialMetadataSize?: number;
   fetchOptions?: RequestInit;
+  /** Enable debug logging */
+  debug?: boolean;
 }
 
 // ============================================================================
@@ -396,16 +399,19 @@ export async function openFile(
 export class AsyncGroup extends Group {
   protected _source: IFileSource;
   protected _linksInitialized: boolean;
+  protected _debug: boolean;
 
   constructor(
     name: string,
     dataobjects: AsyncDataObjects,
     parent: AsyncGroup | null,
-    source: IFileSource
+    source: IFileSource,
+    debug: boolean = false
   ) {
     super(name, dataobjects, parent, false, true);
     this._source = source;
     this._linksInitialized = false;
+    this._debug = debug;
   }
 
   /**
@@ -441,7 +447,8 @@ export class AsyncGroup extends Group {
           }
 
           const newSize = Math.min(sourceSize, currentSize * 4);
-          console.log(
+          debugLog(
+            this._debug,
             `tsfive: Expanding metadata buffer from ${(currentSize / 1024 / 1024).toFixed(1)}MB to ${(newSize / 1024 / 1024).toFixed(1)}MB`
           );
 
@@ -451,7 +458,8 @@ export class AsyncGroup extends Group {
           this._dataobjects = new AsyncDataObjects(
             newBuffer,
             this._dataobjects.offset,
-            this._source
+            this._source,
+            this._debug
           );
           retries++;
         } else {
@@ -529,15 +537,16 @@ export class AsyncGroup extends Group {
     const dataobjs = await AsyncDataObjects.createAsync(
       (this.file as AsyncFile)._fh,
       link_target as number,
-      this._source
+      this._source,
+      this._debug
     );
     if (dataobjs.is_dataset) {
       if (additional_obj !== '.') {
         throw new Error(obj_name + ' is a dataset, not a group');
       }
-      return new AsyncDataset(obj_name, dataobjs, this, this._source);
+      return new AsyncDataset(obj_name, dataobjs, this, this._source, this._debug);
     } else {
-      const new_group = new AsyncGroup(obj_name, dataobjs, this, this._source);
+      const new_group = new AsyncGroup(obj_name, dataobjs, this, this._source, this._debug);
       if (additional_obj === '.') {
         return new_group;
       }
@@ -604,15 +613,16 @@ export class AsyncGroup extends Group {
     const dataobjs = new AsyncDataObjects(
       (this.file as AsyncFile)._fh,
       link_target as number,
-      this._source
+      this._source,
+      this._debug
     );
     if (dataobjs.is_dataset) {
       if (additional_obj !== '.') {
         throw new Error(obj_name + ' is a dataset, not a group');
       }
-      return new AsyncDataset(obj_name, dataobjs, this, this._source);
+      return new AsyncDataset(obj_name, dataobjs, this, this._source, this._debug);
     } else {
-      const new_group = new AsyncGroup(obj_name, dataobjs, this, this._source);
+      const new_group = new AsyncGroup(obj_name, dataobjs, this, this._source, this._debug);
       if (additional_obj === '.') {
         return new_group;
       }
@@ -639,9 +649,10 @@ export class AsyncFile extends AsyncGroup {
     source: IFileSource,
     superblock: SuperBlock,
     dataobjects: AsyncDataObjects,
-    filename?: string
+    filename?: string,
+    debug: boolean = false
   ) {
-    super('/', dataobjects, null, source);
+    super('/', dataobjects, null, source, debug);
     this.parent = this;
     this.file = this as unknown as File;
     this._source = source;
@@ -657,6 +668,7 @@ export class AsyncFile extends AsyncGroup {
    */
   static async open(fileSource: IFileSource, options: OpenFileOptions = {}): Promise<AsyncFile> {
     const initialMetadataSize = options.initialMetadataSize || 64 * 1024;
+    const debug = options.debug ?? false;
 
     let metadataSize = Math.min(initialMetadataSize, fileSource.size);
     let metadataBuffer = await fileSource.read(0, metadataSize);
@@ -664,9 +676,9 @@ export class AsyncFile extends AsyncGroup {
     const superblock = new SuperBlock(metadataBuffer, 0);
     const offset = superblock.offset_to_dataobjects;
 
-    const dataobjects = new AsyncDataObjects(metadataBuffer, offset, fileSource);
+    const dataobjects = new AsyncDataObjects(metadataBuffer, offset, fileSource, debug);
 
-    const file = new AsyncFile(fileSource, superblock, dataobjects, options.filename);
+    const file = new AsyncFile(fileSource, superblock, dataobjects, options.filename, debug);
     file._fh = metadataBuffer;
 
     const maxRetries = 10;
@@ -688,13 +700,14 @@ export class AsyncFile extends AsyncGroup {
           if (newSize <= metadataSize) {
             throw e;
           }
-          console.log(
+          debugLog(
+            debug,
             `tsfive: Expanding metadata buffer from ${(metadataSize / 1024 / 1024).toFixed(1)}MB to ${(newSize / 1024 / 1024).toFixed(1)}MB`
           );
           metadataSize = newSize;
           metadataBuffer = await fileSource.read(0, metadataSize);
           file._fh = metadataBuffer;
-          file._dataobjects = new AsyncDataObjects(metadataBuffer, offset, fileSource);
+          file._dataobjects = new AsyncDataObjects(metadataBuffer, offset, fileSource, debug);
           retries++;
         } else {
           throw e;
@@ -745,15 +758,18 @@ export interface ChunkResult {
  */
 export class AsyncDataset extends Dataset {
   protected _source: IFileSource;
+  protected _debug: boolean;
 
   constructor(
     name: string,
     dataobjects: AsyncDataObjects,
     parent: AsyncGroup,
-    source: IFileSource
+    source: IFileSource,
+    debug: boolean = false
   ) {
     super(name, dataobjects, parent);
     this._source = source;
+    this._debug = debug;
   }
 
   /**

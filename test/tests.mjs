@@ -123,3 +123,51 @@ test('AsyncGroup navigation', async () => {
 
   await file.close();
 });
+
+// ============================================================================
+// Debug Option Tests
+// ============================================================================
+
+test('debug option disabled by default (no logs)', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+
+  const originalLog = console.log;
+  const logs = [];
+  console.log = (...args) => logs.push(args);
+
+  try {
+    const file = await hdf5.openFile(buffer);
+    await file.getAsync('f4');
+    await file.close();
+
+    // Filter for tsfive logs only
+    const tsfiveLogs = logs.filter(log =>
+      String(log[0]).includes('tsfive')
+    );
+    assert.strictEqual(tsfiveLogs.length, 0, 'No debug logs when disabled');
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('debug option enabled produces logs', async () => {
+  const buffer = loadFileAsArrayBuffer("test/test.h5");
+
+  const originalLog = console.log;
+  const logs = [];
+  console.log = (...args) => logs.push(args);
+
+  try {
+    const file = await hdf5.openFile(buffer, { debug: true });
+    await file.getAsync('f4');
+    await file.close();
+
+    // Filter for tsfive logs
+    const tsfiveLogs = logs.filter(log =>
+      String(log[0]).includes('tsfive')
+    );
+    assert.ok(tsfiveLogs.length > 0, 'Debug logs should be present when enabled');
+  } finally {
+    console.log = originalLog;
+  }
+});

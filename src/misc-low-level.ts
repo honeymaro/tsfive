@@ -12,6 +12,7 @@ import {
   _unpack_integer,
   bitSize,
 } from './core.js';
+import { debugLog } from './debug.js';
 import type { StructureDefinition, UnpackedStruct } from './types/hdf5.js';
 import type { IFileSource } from './types/file-source.js';
 
@@ -222,7 +223,12 @@ export class Heap {
   /**
    * Create a Heap with async data loading
    */
-  static async createAsync(fh: ArrayBuffer, offset: number, source: IFileSource): Promise<Heap> {
+  static async createAsync(
+    fh: ArrayBuffer,
+    offset: number,
+    source: IFileSource,
+    debug: boolean = false
+  ): Promise<Heap> {
     const localHeap = _unpack_struct_from(LOCAL_HEAP, fh, offset);
     assert(localHeap.get('signature') === 'HEAP');
     assert(localHeap.get('version') === 0);
@@ -236,7 +242,8 @@ export class Heap {
       heapData = fh.slice(dataOffset, dataOffset + dataSize);
     } else if (source) {
       // Load data from source
-      console.log(
+      debugLog(
+        debug,
         `tsfive: Loading heap data ${dataOffset}-${dataOffset + dataSize} (${dataSize} bytes)`
       );
       heapData = await source.read(dataOffset, dataOffset + dataSize);
@@ -259,16 +266,6 @@ export class Heap {
 
     const dataOffset = localHeap.get('address_of_data_segment') as number;
     const dataSize = localHeap.get('data_segment_size') as number;
-
-    console.log(
-      `tsfive DEBUG Heap: offset=${offset}, data_offset=${dataOffset}, data_size=${dataSize}, buffer_size=${fh.byteLength}`
-    );
-
-    if (dataOffset + dataSize > fh.byteLength) {
-      console.warn(
-        `tsfive WARNING: Heap data segment (${dataOffset}-${dataOffset + dataSize}) is outside buffer (${fh.byteLength})`
-      );
-    }
 
     const heapData = fh.slice(dataOffset, dataOffset + dataSize);
     localHeap.set('heap_data', heapData);
